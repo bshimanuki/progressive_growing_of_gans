@@ -50,7 +50,11 @@ sched       = EasyDict()                                    # Options for train.
 grid        = EasyDict(size='1080p', layout='random')       # Options for train.setup_snapshot_image_grid().
 
 # Dataset (choose one).
-desc += '-celebahq';            dataset = EasyDict(tfrecord_dir='celebahq'); train.mirror_augment = True
+desc += '-coco-captions';            dataset = EasyDict(tfrecord_dir='tfrecord');
+# desc += '-coco-captions-line';            dataset = EasyDict(tfrecord_dir='line_tfrecord');
+# desc += '-coco-captions-serif';            dataset = EasyDict(tfrecord_dir='serif_tfrecord');
+# desc += '-coco-captions-word2vec';            dataset = EasyDict(tfrecord_dir='word2vec_tfrecord');
+# desc += '-celebahq';            dataset = EasyDict(tfrecord_dir='celebahq'); train.mirror_augment = True
 #desc += '-celeba';              dataset = EasyDict(tfrecord_dir='celeba'); train.mirror_augment = True
 #desc += '-cifar10';             dataset = EasyDict(tfrecord_dir='cifar10')
 #desc += '-cifar100';            dataset = EasyDict(tfrecord_dir='cifar100')
