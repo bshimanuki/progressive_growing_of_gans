@@ -31,11 +31,16 @@ def generate(network_pkl, out_dir):
     sched = train.TrainingSchedule(total_kimg * 1000, training_set, **config.sched)
     grid_fakes = Gs.run(grid_latents, grid_labels, minibatch_size=sched.minibatch//config.num_gpus)
     os.makedirs(out_dir)
+    # print(np.min(grid_fakes), np.mean(grid_fakes), np.max(grid_fakes))
+    # misc.save_image_grid(grid_fakes, 'fakes.png', drange=[-1,1], grid_size=grid_size)
     for i, img in enumerate(grid_fakes):
         img = img.transpose((1,2,0))
         img = np.clip(img, -1, 1)
+        img = (1 + img) / 2
         img = skimage.img_as_ubyte(img)
-        imageio.imwrite(os.path.join(out_dir, '{}.png'.format(i)), img)
+        imageio.imwrite(os.path.join(out_dir, '{}.png'.format(i)), img[...,:3])
+        if img.shape[-1] > 3:
+            np.save(os.path.join(out_dir, '{}.npy'.format(i)), img)
 
 
 if __name__ == '__main__':

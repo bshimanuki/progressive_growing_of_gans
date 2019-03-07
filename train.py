@@ -39,6 +39,8 @@ def setup_snapshot_image_grid(G, training_set,
         x = idx % gw; y = idx // gw
         while True:
             real, label = training_set.get_minibatch_np(1)
+            if isinstance(training_set, dataset.TFRecordPairedDataset):
+                real, _ = real
             if layout == 'row_per_class' and training_set.label_size > 0:
                 if label[0, y % training_set.label_size] == 0.0:
                     continue
@@ -53,7 +55,7 @@ def setup_snapshot_image_grid(G, training_set,
 #----------------------------------------------------------------------------
 # Just-in-time processing of training images before feeding them to the networks.
 
-def process_reals(x, lod, mirror_augment, drange_data, drange_net):
+def process_reals(x, lod, mirror_augment, drange_data, drange_net, y_factor=2, x_factor=2, shape=None):
     with tf.name_scope('ProcessReals'):
         with tf.name_scope('DynamicRange'):
             x = tf.cast(x, tf.float32)
@@ -66,17 +68,23 @@ def process_reals(x, lod, mirror_augment, drange_data, drange_net):
                 x = tf.where(mask < 0.5, x, tf.reverse(x, axis=[3]))
         with tf.name_scope('FadeLOD'): # Smooth crossfade between consecutive levels-of-detail.
             s = tf.shape(x)
-            y = tf.reshape(x, [-1, s[1], s[2]//2, 2, s[3]//2, 2])
+            y = tf.reshape(x, [-1, s[1], s[2]//y_factor, y_factor, s[3]//x_factor, x_factor])
             y = tf.reduce_mean(y, axis=[3, 5], keepdims=True)
-            y = tf.tile(y, [1, 1, 1, 2, 1, 2])
+            y = tf.tile(y, [1, 1, 1, y_factor, 1, x_factor])
             y = tf.reshape(y, [-1, s[1], s[2], s[3]])
             x = tfutil.lerp(x, y, lod - tf.floor(lod))
         with tf.name_scope('UpscaleLOD'): # Upscale to match the expected input/output size of the networks.
             s = tf.shape(x)
-            factor = tf.cast(2 ** tf.floor(lod), tf.int32)
+            if shape is None:
+                factor = tf.cast(2 ** tf.floor(lod), tf.int32)
+                y_factor = factor if y_factor == 2 else 1
+                x_factor = factor if x_factor == 2 else 1
+            else:
+                y_factor = shape[0] // s[2]
+                x_factor = shape[1] // s[3]
             x = tf.reshape(x, [-1, s[1], s[2], 1, s[3], 1])
-            x = tf.tile(x, [1, 1, 1, factor, 1, factor])
-            x = tf.reshape(x, [-1, s[1], s[2] * factor, s[3] * factor])
+            x = tf.tile(x, [1, 1, 1, y_factor, 1, x_factor])
+            x = tf.reshape(x, [-1, s[1], s[2] * y_factor, s[3] * x_factor])
         return x
 
 #----------------------------------------------------------------------------
@@ -158,20 +166,26 @@ def train_progressive_gan(
             G, D, Gs = misc.load_pkl(network_pkl)
         else:
             print('Constructing networks...')
-            G = tfutil.Network('G', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **config.G)
-            D = tfutil.Network('D', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **config.D)
+            G = tfutil.Network('G', num_channels=training_set.shape[0], resolution=training_set.shape[2], label_size=training_set.label_size, resolution2=training_set.shape[1], **config.G)
+            D = tfutil.Network('D', num_channels=training_set.shape[0], resolution=training_set.shape[2], label_size=training_set.label_size, resolution2=training_set.shape[1], **config.D)
             Gs = G.clone('Gs')
         Gs_update_op = Gs.setup_as_moving_average_of(G, beta=G_smoothing)
     G.print_layers(); D.print_layers()
 
     print('Building TensorFlow graph...')
+    shared = isinstance(training_set, dataset.TFRecordPairedDataset)
     with tf.name_scope('Inputs'):
         lod_in          = tf.placeholder(tf.float32, name='lod_in', shape=[])
         lrate_in        = tf.placeholder(tf.float32, name='lrate_in', shape=[])
         minibatch_in    = tf.placeholder(tf.int32, name='minibatch_in', shape=[])
         minibatch_split = minibatch_in // config.num_gpus
         reals, labels   = training_set.get_minibatch_tf()
-        reals_split     = tf.split(reals, config.num_gpus)
+        if shared:
+            reals_img, reals_cap = reals
+            reals_split_img     = tf.split(reals_img, config.num_gpus)
+            reals_split_cap     = tf.split(reals_cap, config.num_gpus)
+        else:
+            reals_split     = tf.split(reals, config.num_gpus)
         labels_split    = tf.split(labels, config.num_gpus)
     G_opt = tfutil.Optimizer(name='TrainG', learning_rate=lrate_in, **config.G_opt)
     D_opt = tfutil.Optimizer(name='TrainD', learning_rate=lrate_in, **config.D_opt)
@@ -180,7 +194,15 @@ def train_progressive_gan(
             G_gpu = G if gpu == 0 else G.clone(G.name + '_shadow')
             D_gpu = D if gpu == 0 else D.clone(D.name + '_shadow')
             lod_assign_ops = [tf.assign(G_gpu.find_var('lod'), lod_in), tf.assign(D_gpu.find_var('lod'), lod_in)]
-            reals_gpu = process_reals(reals_split[gpu], lod_in, mirror_augment, training_set.dynamic_range, drange_net)
+            if shared:
+                reals_gpu_img = process_reals(reals_split_img[gpu], lod_in, mirror_augment, training_set.dynamic_range, drange_net)
+                resolution_log2 = np.log2(training_set.shape[1])
+                cap_y_factor = tf.cond(lod_in > resolution_log2 - 4, 2, 1)
+                cap_x_factor = tf.cond(lod_in > resolution_log2 - 4, 2, 4)
+                reals_gpu_cap = process_reals(reals_split_cap[gpu], lod_in, mirror_augment, training_set.dynamic_range, drange_net, y_factor=cap_y_factor, x_factor=cap_x_factor, shape=training_set.shape_cap)
+                reals_gpu = (reals_gpu_img, reals_gpu_cap)
+            else:
+                reals_gpu = process_reals(reals_split[gpu], lod_in, mirror_augment, training_set.dynamic_range, drange_net, y_factor=(2 if training_set.shape[1]==training_set.shape[2] else 1))
             labels_gpu = labels_split[gpu]
             with tf.name_scope('G_loss'), tf.control_dependencies(lod_assign_ops):
                 G_loss = tfutil.call_func_by_name(G=G_gpu, D=D_gpu, opt=G_opt, training_set=training_set, minibatch_size=minibatch_split, **config.G_loss)
