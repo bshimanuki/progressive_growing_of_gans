@@ -33,18 +33,23 @@ def setup_snapshot_image_grid(G, training_set,
         gh = np.clip(2160 // G.output_shape[2], 4, 32)
 
     # Fill in reals and labels.
-    reals = np.zeros([gw * gh] + training_set.shape, dtype=training_set.dtype)
+    if isinstance(training_set, dataset.TFRecordPairedDataset):
+        reals = (np.zeros([gw * gh] + training_set.shape_img, dtype=training_set.dtype), np.zeros([gw * gh] + training_set.shape_cap, dtype=training_set.dtype))
+    else:
+        reals = np.zeros([gw * gh] + training_set.shape, dtype=training_set.dtype)
     labels = np.zeros([gw * gh, training_set.label_size], dtype=training_set.label_dtype)
     for idx in range(gw * gh):
         x = idx % gw; y = idx // gw
         while True:
             real, label = training_set.get_minibatch_np(1)
-            if isinstance(training_set, dataset.TFRecordPairedDataset):
-                real, _ = real
             if layout == 'row_per_class' and training_set.label_size > 0:
                 if label[0, y % training_set.label_size] == 0.0:
                     continue
-            reals[idx] = real[0]
+            if isinstance(training_set, dataset.TFRecordPairedDataset):
+                for _reals, _real in zip(reals, real):
+                    _reals[idx] = _real[0]
+            else:
+                reals[idx] = real[0]
             labels[idx] = label[0]
             break
 
@@ -197,8 +202,8 @@ def train_progressive_gan(
             if shared:
                 reals_gpu_img = process_reals(reals_split_img[gpu], lod_in, mirror_augment, training_set.dynamic_range, drange_net)
                 resolution_log2 = np.log2(training_set.shape[1])
-                cap_y_factor = tf.cond(lod_in > resolution_log2 - 4, 2, 1)
-                cap_x_factor = tf.cond(lod_in > resolution_log2 - 4, 2, 4)
+                cap_y_factor = tf.cond(lod_in > resolution_log2 - 4, lambda: 2, lambda: 1)
+                cap_x_factor = tf.cond(lod_in > resolution_log2 - 4, lambda: 2, lambda: 4)
                 reals_gpu_cap = process_reals(reals_split_cap[gpu], lod_in, mirror_augment, training_set.dynamic_range, drange_net, y_factor=cap_y_factor, x_factor=cap_x_factor, shape=training_set.shape_cap)
                 reals_gpu = (reals_gpu_img, reals_gpu_cap)
             else:

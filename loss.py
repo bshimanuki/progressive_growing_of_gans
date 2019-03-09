@@ -23,12 +23,16 @@ def fp32(*values):
 # Generator loss function used in the paper (WGAN + AC-GAN).
 
 def G_wgan_acgan(G, D, opt, training_set, minibatch_size,
-    cond_weight = 1.0): # Weight of the conditioning term.
+    cond_weight = 1.0,        # Weight of the conditioning term.
+    shared=False):
 
     latents = tf.random_normal([minibatch_size] + G.input_shapes[0][1:])
     labels = training_set.get_random_labels_tf(minibatch_size)
     fake_images_out = G.get_output_for(latents, labels, is_training=True)
-    fake_scores_out, fake_labels_out = fp32(D.get_output_for(fake_images_out, is_training=True))
+    if shared:
+        fake_scores_out, fake_labels_out = fp32(D.get_output_for(*fake_images_out, is_training=True))
+    else:
+        fake_scores_out, fake_labels_out = fp32(D.get_output_for(fake_images_out, is_training=True))
     loss = -fake_scores_out
 
     if D.output_shapes[1][1] > 0:
@@ -44,23 +48,37 @@ def D_wgangp_acgan(G, D, opt, training_set, minibatch_size, reals, labels,
     wgan_lambda     = 10.0,     # Weight for the gradient penalty term.
     wgan_epsilon    = 0.001,    # Weight for the epsilon term, \epsilon_{drift}.
     wgan_target     = 1.0,      # Target value for gradient magnitudes.
-    cond_weight     = 1.0):     # Weight of the conditioning terms.
+    cond_weight     = 1.0,      # Weight of the conditioning terms.
+    shared=False):
 
     latents = tf.random_normal([minibatch_size] + G.input_shapes[0][1:])
     fake_images_out = G.get_output_for(latents, labels, is_training=True)
-    real_scores_out, real_labels_out = fp32(D.get_output_for(reals, is_training=True))
-    fake_scores_out, fake_labels_out = fp32(D.get_output_for(fake_images_out, is_training=True))
+    if shared:
+        real_scores_out, real_labels_out = fp32(D.get_output_for(*reals, is_training=True))
+        fake_scores_out, fake_labels_out = fp32(D.get_output_for(*fake_images_out, is_training=True))
+        out_dtype = fake_images_out[0].dtype
+    else:
+        real_scores_out, real_labels_out = fp32(D.get_output_for(reals, is_training=True))
+        fake_scores_out, fake_labels_out = fp32(D.get_output_for(fake_images_out, is_training=True))
+        out_dtype = fake_images_out.dtype
     real_scores_out = tfutil.autosummary('Loss/real_scores', real_scores_out)
     fake_scores_out = tfutil.autosummary('Loss/fake_scores', fake_scores_out)
     loss = fake_scores_out - real_scores_out
 
     with tf.name_scope('GradientPenalty'):
-        mixing_factors = tf.random_uniform([minibatch_size, 1, 1, 1], 0.0, 1.0, dtype=fake_images_out.dtype)
-        mixed_images_out = tfutil.lerp(tf.cast(reals, fake_images_out.dtype), fake_images_out, mixing_factors)
-        mixed_scores_out, mixed_labels_out = fp32(D.get_output_for(mixed_images_out, is_training=True))
+        mixing_factors = tf.random_uniform([minibatch_size, 1, 1, 1], 0.0, 1.0, dtype=out_dtype)
+        if shared:
+            mixed_images_out = tuple(tfutil.lerp(tf.cast(_reals, out_dtype), _fake_images_out, mixing_factors) for _reals, _fake_images_out in zip(reals, fake_images_out))
+            mixed_scores_out, mixed_labels_out = fp32(D.get_output_for(*mixed_images_out, is_training=True))
+        else:
+            mixed_images_out = tfutil.lerp(tf.cast(reals, out_dtype), fake_images_out, mixing_factors)
+            mixed_scores_out, mixed_labels_out = fp32(D.get_output_for(mixed_images_out, is_training=True))
         mixed_scores_out = tfutil.autosummary('Loss/mixed_scores', mixed_scores_out)
         mixed_loss = opt.apply_loss_scaling(tf.reduce_sum(mixed_scores_out))
-        mixed_grads = opt.undo_loss_scaling(fp32(tf.gradients(mixed_loss, [mixed_images_out])[0]))
+        if shared:
+            mixed_grads = opt.undo_loss_scaling(fp32(tf.gradients([mixed_loss, mixed_loss], list(mixed_images_out))[0]))
+        else:
+            mixed_grads = opt.undo_loss_scaling(fp32(tf.gradients(mixed_loss, [mixed_images_out])[0]))
         mixed_norms = tf.sqrt(tf.reduce_sum(tf.square(mixed_grads), axis=[1,2,3]))
         mixed_norms = tfutil.autosummary('Loss/mixed_norms', mixed_norms)
         gradient_penalty = tf.square(mixed_norms - wgan_target)

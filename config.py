@@ -42,13 +42,17 @@ dataset     = EasyDict()                                    # Options for datase
 train       = EasyDict(func='train.train_progressive_gan')  # Options for main training func.
 # train       = EasyDict(func='train.train_progressive_gan', resume_run_id='006-pgan-coco-captions-word2vec15-preset-v2-1gpu-fp32', resume_kimg=5407.7, resume_time=2*24*3600+22*3600+47*60)  # Options for main training func.
 # G           = EasyDict(func='networks.G_paper')             # Options for generator network.
-G           = EasyDict(func='networks.G_paper', square=False)             # Options for generator network.
+# G           = EasyDict(func='networks.G_paper', square=False)             # Options for generator network.
+G           = EasyDict(func='networks.G_paired')             # Options for generator network.
 # D           = EasyDict(func='networks.D_paper')             # Options for discriminator network.
-D           = EasyDict(func='networks.D_paper', square=False)             # Options for discriminator network.
+# D           = EasyDict(func='networks.D_paper', square=False)             # Options for discriminator network.
+D           = EasyDict(func='networks.D_paired')             # Options for discriminator network.
 G_opt       = EasyDict(beta1=0.0, beta2=0.99, epsilon=1e-8) # Options for generator optimizer.
 D_opt       = EasyDict(beta1=0.0, beta2=0.99, epsilon=1e-8) # Options for discriminator optimizer.
-G_loss      = EasyDict(func='loss.G_wgan_acgan')            # Options for generator loss.
-D_loss      = EasyDict(func='loss.D_wgangp_acgan')          # Options for discriminator loss.
+# G_loss      = EasyDict(func='loss.G_wgan_acgan')            # Options for generator loss.
+G_loss      = EasyDict(func='loss.G_wgan_acgan', shared=True)            # Options for generator loss.
+# D_loss      = EasyDict(func='loss.D_wgangp_acgan')          # Options for discriminator loss.
+D_loss      = EasyDict(func='loss.D_wgangp_acgan', shared=True)          # Options for discriminator loss.
 sched       = EasyDict()                                    # Options for train.TrainingSchedule.
 grid        = EasyDict(size='1080p', layout='random')       # Options for train.setup_snapshot_image_grid().
 
@@ -65,7 +69,8 @@ grid        = EasyDict(size='1080p', layout='random')       # Options for train.
 # desc += '-coco-captions-wordblock';            dataset = EasyDict(tfrecord_dir='wordblock_tfrecord');
 # desc += '-flowers-captions-word2vec15_mask';            dataset = EasyDict(tfrecord_dir='flowers_tfrecord');
 # desc += '-flowers-captions-linear-small';            dataset = EasyDict(tfrecord_dir='flowers_linear_tfrecord');
-desc += '-flowers-captions-linear-deduped';            dataset = EasyDict(tfrecord_dir='flowers_linear_deduped_tfrecord');
+# desc += '-flowers-captions-linear-deduped';            dataset = EasyDict(tfrecord_dir='flowers_linear_deduped_tfrecord');
+desc += '-flowers-captions-shared';            dataset = EasyDict(tfrecord_dir='flowers_joint_shared_tfrecord', class_name='dataset.TFRecordPairedDataset');
 # desc += '-celebahq';            dataset = EasyDict(tfrecord_dir='celebahq'); train.mirror_augment = True
 #desc += '-celeba';              dataset = EasyDict(tfrecord_dir='celeba'); train.mirror_augment = True
 #desc += '-cifar10';             dataset = EasyDict(tfrecord_dir='cifar10')
@@ -113,9 +118,10 @@ desc += '-flowers-captions-linear-deduped';            dataset = EasyDict(tfreco
 
 # Config presets (choose one).
 #desc += '-preset-v1-1gpu'; num_gpus = 1; D.mbstd_group_size = 16; sched.minibatch_base = 16; sched.minibatch_dict = {256: 14, 512: 6, 1024: 3}; sched.lod_training_kimg = 800; sched.lod_transition_kimg = 800; train.total_kimg = 19000
-# desc += '-preset-v2-1gpu'; num_gpus = 1; sched.minibatch_base = 4; sched.minibatch_dict = {4: 128, 8: 128, 16: 128, 32: 64, 64: 32, 128: 16, 256: 8, 512: 4}; sched.G_lrate_dict = {1024: 0.0015}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000
+desc += '-preset-v2-1gpu'; num_gpus = 1; sched.minibatch_base = 4; sched.minibatch_dict = {4: 128, 8: 128, 16: 128, 32: 64, 64: 32, 128: 16, 256: 8, 512: 4}; sched.G_lrate_dict = {1024: 0.0015}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000
 # desc += '-preset-v2-2gpus'; num_gpus = 2; sched.minibatch_base = 8; sched.minibatch_dict = {4: 256, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16, 256: 8}; sched.G_lrate_dict = {512: 0.0015, 1024: 0.002}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000
-desc += '-short-v2-2gpus'; num_gpus = 2; sched.minibatch_base = 8; sched.minibatch_dict = {4: 256, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16, 256: 8}; sched.G_lrate_dict = {512: 0.0015, 1024: 0.002}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000; sched.lod_training_kimg=100; sched.lod_transition_kimg=100;
+# desc += '-short-v2-2gpus'; num_gpus = 2; sched.minibatch_base = 8; sched.minibatch_dict = {4: 256, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16, 256: 8}; sched.G_lrate_dict = {512: 0.0015, 1024: 0.002}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000; sched.lod_training_kimg=100; sched.lod_transition_kimg=100;
+# desc += '-medium-v2-2gpus'; num_gpus = 2; sched.minibatch_base = 8; sched.minibatch_dict = {4: 256, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16, 256: 8}; sched.G_lrate_dict = {512: 0.0015, 1024: 0.002}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000; sched.lod_training_kimg=300; sched.lod_transition_kimg=300;
 #desc += '-preset-v2-4gpus'; num_gpus = 4; sched.minibatch_base = 16; sched.minibatch_dict = {4: 512, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16}; sched.G_lrate_dict = {256: 0.0015, 512: 0.002, 1024: 0.003}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000
 #desc += '-preset-v2-8gpus'; num_gpus = 8; sched.minibatch_base = 32; sched.minibatch_dict = {4: 512, 8: 256, 16: 128, 32: 64, 64: 32}; sched.G_lrate_dict = {128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000
 

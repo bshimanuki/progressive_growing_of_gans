@@ -272,7 +272,7 @@ class TFRecordPairedDataset:
         assert all(shape[0] == max_shape_cap[0] for shape in tfr_shapes_cap)
         assert all(shape[1] == shape[2] for shape in tfr_shapes_img)
         # assert all(shape[1] == self.resolution // (2**lod) for shape, lod in zip(tfr_shapes, tfr_lods))
-        assert all(shape[2] == self.resolution // (2**lod) for shape, lod in zip(tfr_shapes_img, tfr_lods))
+        assert all(shape[2] == self.resolution_img // (2**lod) for shape, lod in zip(tfr_shapes_img, tfr_lods))
         assert all(lod in tfr_lods for lod in range(self.resolution_log2 - 1))
 
         # Load labels.
@@ -299,7 +299,7 @@ class TFRecordPairedDataset:
                 dset = tf.data.TFRecordDataset(tfr_file, compression_type='', buffer_size=buffer_mb<<20)
                 dset = dset.map(parse_paired_tfrecord_tf, num_parallel_calls=num_threads)
                 dset = tf.data.Dataset.zip((dset, self._tf_labels_dataset))
-                bytes_per_item = np.prod(tfr_shape) * np.dtype(self.dtype).itemsize
+                bytes_per_item = (np.prod(tfr_shape_img) + np.prod(tfr_shape_cap)) * np.dtype(self.dtype).itemsize
                 if shuffle_mb > 0:
                     dset = dset.shuffle(((shuffle_mb << 20) - 1) // bytes_per_item + 1)
                 if repeat:

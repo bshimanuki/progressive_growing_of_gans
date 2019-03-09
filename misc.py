@@ -43,6 +43,9 @@ def adjust_dynamic_range(data, drange_in, drange_out):
     return data
 
 def create_image_grid(images, grid_size=None):
+    has_cap = isinstance(images, tuple)
+    if has_cap:
+        images, images_cap = images
     assert images.ndim == 3 or images.ndim == 4
     num, img_w, img_h = images.shape[0], images.shape[-1], images.shape[-2]
 
@@ -57,6 +60,13 @@ def create_image_grid(images, grid_size=None):
         x = (idx % grid_w) * img_w
         y = (idx // grid_w) * img_h
         grid[..., y : y + img_h, x : x + img_w] = images[idx]
+        if has_cap and (idx // grid_w) & 1:
+            cap = images_cap[idx]
+            cap = cap[..., :images.shape[-3], :, :]
+            cap = cap.reshape([*cap.shape[:-2], cap.shape[-2], -1, img_w])
+            cap = np.swapaxes(cap, -2, -3)
+            cap = cap.reshape([*cap.shape[:-3], -1, img_w])
+            grid[..., y - img_h : y, x : x + img_w] = cap
     return grid
 
 def convert_to_pil_image(image, drange=[0,1]):
