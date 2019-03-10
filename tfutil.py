@@ -700,7 +700,7 @@ class Network:
                         visited.add(suffix)
 
             # Otherwise => interpret as a layer.
-            else:
+            elif ops[-1].outputs:
                 layer_name = scope[len(self.scope)+1:]
                 layer_output = ops[-1].outputs[0]
                 layer_trainables = [op.outputs[0] for op in ops if op.type.startswith('Variable') and self.get_var_localname(op.name) in self.trainables]

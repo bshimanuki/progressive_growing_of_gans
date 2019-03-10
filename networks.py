@@ -10,6 +10,13 @@ import contextlib
 import numpy as np
 import tensorflow as tf
 
+def debug(x, data):
+    with tf.device('/cpu:0'):
+        print_op = tf.print(data)
+    with tf.control_dependencies([print_op]):
+        x = tf.identity(x)
+    return x
+
 # NOTE: Do not import any application-specific modules here!
 
 #----------------------------------------------------------------------------
@@ -71,72 +78,64 @@ def leaky_relu(x, alpha=0.2):
 #----------------------------------------------------------------------------
 # Nearest-neighbor upscaling layer.
 
-def upscale2d(x, factor=2, y_factor=None, scope=None):
-    scope = tf.variable_scope(scope, reuse=tf.AUTO_REUSE) if scope is not None else contextlib.suppress()
-    with scope:
-        assert isinstance(factor, int) and factor >= 1
-        if factor == 1: return x
-        x_factor = factor
-        y_factor = factor if y_factor is None else y_factor
-        with tf.variable_scope('Upscale2D'):
-            s = x.shape
-            x = tf.reshape(x, [-1, s[1], s[2], 1, s[3], 1])
-            x = tf.tile(x, [1, 1, 1, y_factor, 1, x_factor])
-            x = tf.reshape(x, [-1, s[1], s[2] * y_factor, s[3] * x_factor])
-            return x
+def upscale2d(x, factor=2, y_factor=None):
+    assert isinstance(factor, int) and factor >= 1
+    if factor == 1: return x
+    x_factor = factor
+    y_factor = factor if y_factor is None else y_factor
+    with tf.variable_scope('Upscale2D'):
+        s = x.shape
+        x = tf.reshape(x, [-1, s[1], s[2], 1, s[3], 1])
+        x = tf.tile(x, [1, 1, 1, y_factor, 1, x_factor])
+        x = tf.reshape(x, [-1, s[1], s[2] * y_factor, s[3] * x_factor])
+        return x
 
 #----------------------------------------------------------------------------
 # Fused upscale2d + conv2d.
 # Faster and uses less memory than performing the operations separately.
 
-def upscale2d_conv2d(x, fmaps, kernel, gain=np.sqrt(2), use_wscale=False, y_factor=2, x_factor=2, scope=None):
-    scope = tf.variable_scope(scope, reuse=tf.AUTO_REUSE) if scope is not None else contextlib.suppress()
-    with scope:
-        assert kernel >= 1 and kernel % 2 == 1
-        w = get_weight([kernel, kernel, fmaps, x.shape[1].value], gain=gain, use_wscale=use_wscale, fan_in=(kernel**2)*x.shape[1].value)
-        w = tf.pad(w, [[y_factor-1,1], [x_factor-1,1], [0,0], [0,0]], mode='CONSTANT')
-        partials = []
-        # w = tf.add_n([w[1:, 1:], w[:-1, 1:], w[1:, :-1], w[:-1, :-1]])
-        for _y in range(y_factor):
-            for _x in range(x_factor):
-                partials.append(w[_y:kernel+_y+1, _x:kernel+_x+1])
-        w = tf.add_n(partials)
-        w = tf.cast(w, x.dtype)
-        os = [tf.shape(x)[0], fmaps, x.shape[2] * y_factor, x.shape[3] * x_factor]
-        return tf.nn.conv2d_transpose(x, w, os, strides=[1,1,y_factor,x_factor], padding='SAME', data_format='NCHW')
+def upscale2d_conv2d(x, fmaps, kernel, gain=np.sqrt(2), use_wscale=False, y_factor=2, x_factor=2):
+    assert kernel >= 1 and kernel % 2 == 1
+    w = get_weight([kernel, kernel, fmaps, x.shape[1].value], gain=gain, use_wscale=use_wscale, fan_in=(kernel**2)*x.shape[1].value)
+    w = tf.pad(w, [[y_factor-1,1], [x_factor-1,1], [0,0], [0,0]], mode='CONSTANT')
+    partials = []
+    # w = tf.add_n([w[1:, 1:], w[:-1, 1:], w[1:, :-1], w[:-1, :-1]])
+    for _y in range(y_factor):
+        for _x in range(x_factor):
+            partials.append(w[_y:kernel+_y+1, _x:kernel+_x+1])
+    w = tf.add_n(partials)
+    w = tf.cast(w, x.dtype)
+    os = [tf.shape(x)[0], fmaps, x.shape[2] * y_factor, x.shape[3] * x_factor]
+    return tf.nn.conv2d_transpose(x, w, os, strides=[1,1,y_factor,x_factor], padding='SAME', data_format='NCHW')
 
 #----------------------------------------------------------------------------
 # Box filter downscaling layer.
 
-def downscale2d(x, factor=2, y_factor=None, scope=None):
-    scope = tf.variable_scope(scope, reuse=tf.AUTO_REUSE) if scope is not None else contextlib.suppress()
-    with scope:
-        assert isinstance(factor, int) and factor >= 1
-        if factor == 1: return x
-        x_factor = factor
-        y_factor = factor if y_factor is None else y_factor
-        with tf.variable_scope('Downscale2D'):
-            ksize = [1, 1, y_factor, x_factor]
-            return tf.nn.avg_pool(x, ksize=ksize, strides=ksize, padding='VALID', data_format='NCHW') # NOTE: requires tf_config['graph_options.place_pruned_graph'] = True
+def downscale2d(x, factor=2, y_factor=None):
+    assert isinstance(factor, int) and factor >= 1
+    if factor == 1: return x
+    x_factor = factor
+    y_factor = factor if y_factor is None else y_factor
+    with tf.variable_scope('Downscale2D'):
+        ksize = [1, 1, y_factor, x_factor]
+        return tf.nn.avg_pool(x, ksize=ksize, strides=ksize, padding='VALID', data_format='NCHW') # NOTE: requires tf_config['graph_options.place_pruned_graph'] = True
 
 #----------------------------------------------------------------------------
 # Fused conv2d + downscale2d.
 # Faster and uses less memory than performing the operations separately.
 
-def conv2d_downscale2d(x, fmaps, kernel, gain=np.sqrt(2), use_wscale=False, y_factor=2, x_factor=2, scope=None):
-    scope = tf.variable_scope(scope, reuse=tf.AUTO_REUSE) if scope is not None else contextlib.suppress()
-    with scope:
-        assert kernel >= 1 and kernel % 2 == 1
-        w = get_weight([kernel, kernel, x.shape[1].value, fmaps], gain=gain, use_wscale=use_wscale)
-        w = tf.pad(w, [[y_factor-1,1], [x_factor-1,1], [0,0], [0,0]], mode='CONSTANT')
-        partials = []
-        # w = tf.add_n([w[1:, 1:], w[:-1, 1:], w[1:, :-1], w[:-1, :-1]]) * 0.25
-        for _y in range(y_factor):
-            for _x in range(x_factor):
-                partials.append(w[_y:kernel+_y+1, _x:kernel+_x+1])
-        w = tf.add_n(partials) / (y_factor * x_factor)
-        w = tf.cast(w, x.dtype)
-        return tf.nn.conv2d(x, w, strides=[1,1,y_factor,x_factor], padding='SAME', data_format='NCHW')
+def conv2d_downscale2d(x, fmaps, kernel, gain=np.sqrt(2), use_wscale=False, y_factor=2, x_factor=2):
+    assert kernel >= 1 and kernel % 2 == 1
+    w = get_weight([kernel, kernel, x.shape[1].value, fmaps], gain=gain, use_wscale=use_wscale)
+    w = tf.pad(w, [[y_factor-1,1], [x_factor-1,1], [0,0], [0,0]], mode='CONSTANT')
+    partials = []
+    # w = tf.add_n([w[1:, 1:], w[:-1, 1:], w[1:, :-1], w[:-1, :-1]]) * 0.25
+    for _y in range(y_factor):
+        for _x in range(x_factor):
+            partials.append(w[_y:kernel+_y+1, _x:kernel+_x+1])
+    w = tf.add_n(partials) / (y_factor * x_factor)
+    w = tf.cast(w, x.dtype)
+    return tf.nn.conv2d(x, w, strides=[1,1,y_factor,x_factor], padding='SAME', data_format='NCHW')
 
 #----------------------------------------------------------------------------
 # Pixelwise feature vector normalization.
@@ -228,12 +227,10 @@ def G_paper(
                 with tf.variable_scope('Conv1'):
                     x = PN(act(apply_bias(conv2d(x, fmaps=nf(res-1), kernel=3, use_wscale=use_wscale))))
             return x
-    def torgb(x, res, scope=None): # res = 2..resolution_log2
-        scope = tf.variable_scope(scope, reuse=tf.AUTO_REUSE) if scope is not None else contextlib.suppress()
-        with scope:
-            lod = resolution_log2 - res
-            with tf.variable_scope('ToRGB_lod%d' % lod):
-                return apply_bias(conv2d(x, fmaps=num_channels, kernel=1, gain=1, use_wscale=use_wscale))
+    def torgb(x, res): # res = 2..resolution_log2
+        lod = resolution_log2 - res
+        with tf.variable_scope('ToRGB_lod%d' % lod):
+            return apply_bias(conv2d(x, fmaps=num_channels, kernel=1, gain=1, use_wscale=use_wscale))
 
     # Linear structure: simple but inefficient.
     if structure == 'linear':
@@ -390,7 +387,7 @@ def G_paired(
 
     # Building blocks.
     def block(x, res, cap=False): # res = 2..resolution_log2
-        with tf.variable_scope('%dx%d' % (2**res, 2**res)):
+        with tf.variable_scope('%dx%d-%s' % (2**res, 2**res, 'caption' if cap else 'image')):
             if res > 4 and cap:
                 y_factor = 1
                 x_factor = 4
@@ -416,43 +413,37 @@ def G_paired(
                 with tf.variable_scope('Conv1'):
                     x = PN(act(apply_bias(conv2d(x, fmaps=nf(res-1), kernel=3, use_wscale=use_wscale))))
             return x
-    def torgb(x, res, cap=False, scope=None): # res = 2..resolution_log2
-        scope = tf.variable_scope(scope, reuse=tf.AUTO_REUSE) if scope is not None else contextlib.suppress()
-        with scope:
-            nc = shape_cap[0] if cap else num_channels
-            lod = resolution_log2 - res
-            with tf.variable_scope('ToRGB_lod%d' % lod):
-                return apply_bias(conv2d(x, fmaps=nc, kernel=1, gain=1, use_wscale=use_wscale))
+    def torgb(x, res, cap=False): # res = 2..resolution_log2
+        nc = shape_cap[0] if cap else num_channels
+        lod = resolution_log2 - res
+        with tf.variable_scope('ToRGB_lod%d-%s' % (lod, 'caption' if cap else 'image')):
+            return apply_bias(conv2d(x, fmaps=nc, kernel=1, gain=1, use_wscale=use_wscale))
 
     # Linear structure: simple but inefficient.
     if structure == 'linear':
-        with tf.variable_scope('image', reuse=tf.AUTO_REUSE):
-            x_img = block(combo_in, 2)
-            images_out_img = torgb(x_img, 2)
-        with tf.variable_scope('caption', reuse=tf.AUTO_REUSE):
-            images_out_cap = torgb(x_img, 2, cap=True)
+        x_img = block(combo_in, 2)
+        images_out_img = torgb(x_img, 2)
+        images_out_cap = torgb(x_img, 2, cap=True)
         for res in range(3, resolution_log2 + 1):
             lod = resolution_log2 - res
-            with tf.variable_scope('image', reuse=tf.AUTO_REUSE):
-                x_img = block(x_img, res)
-                img_img = torgb(x_img, res)
-                images_out_img = upscale2d(images_out_img)
-                with tf.variable_scope('Grow_lod%d' % lod):
-                    images_out_img = lerp_clip(img_img, images_out_img, lod_in - lod)
-                # with tf.variable_scope('caption_split', reuse=tf.AUTO_REUSE):
-                    # images_out_cap = torgb(images_out_img, res, cap=True)
-            with tf.variable_scope('caption', reuse=tf.AUTO_REUSE):
-                if res < 5:
-                    x_cap = x_img
-                else:
-                    x_cap = block(x_cap, res, cap=True)
-                img_cap = torgb(x_cap, res, cap=True)
-                if res >= 5:
-                    images_out_cap = upscale2d(images_out_cap, factor=4, y_factor=1)
-                else:
-                    images_out_cap = upscale2d(images_out_cap)
-                with tf.variable_scope('Grow_lod%d' % lod):
-                    images_out_cap = lerp_clip(img_cap, images_out_cap, lod_in - lod)
+            x_img = block(x_img, res)
+            img_img = torgb(x_img, res)
+            images_out_img = upscale2d(images_out_img)
+            with tf.variable_scope('Grow_lod%d' % lod):
+                images_out_img = lerp_clip(img_img, images_out_img, lod_in - lod)
+            # with tf.variable_scope('caption_split', reuse=tf.AUTO_REUSE):
+                # images_out_cap = torgb(images_out_img, res, cap=True)
+            if res < 5:
+                x_cap = x_img
+            else:
+                x_cap = block(x_cap, res, cap=True)
+            img_cap = torgb(x_cap, res, cap=True)
+            if res >= 5:
+                images_out_cap = upscale2d(images_out_cap, factor=4, y_factor=1)
+            else:
+                images_out_cap = upscale2d(images_out_cap)
+            with tf.variable_scope('Grow_lod%d' % lod):
+                images_out_cap = lerp_clip(img_cap, images_out_cap, lod_in - lod)
 
     # Recursive structure: complex but efficient.
     if structure == 'recursive':
@@ -462,20 +453,18 @@ def G_paired(
                 x_cap = x
             elif res > 5:
                 x, x_cap = x
-            with tf.variable_scope('image', reuse=tf.AUTO_REUSE):
-                y = block(x, res)
-            img = lambda: upscale2d(torgb(y, res, scope='image'), 2**lod, scope='image')
-            img_cap = lambda: upscale2d(torgb(y, res, cap=True, scope='caption'), 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor, scope='caption')
+            y = block(x, res)
+            img = lambda: upscale2d(torgb(y, res), 2**lod)
+            img_cap = lambda: upscale2d(torgb(y, res, cap=True), 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor)
             img_pair = lambda: (img(), img_cap())
             if res > 2:
-                img_cap = cset(img_cap, (lod_in > lod), lambda: upscale2d(lerp(torgb(y, res, cap=True, scope='caption'), upscale2d(torgb(x, res - 1, cap=True, scope='caption'), scope='caption'), lod_in - lod), 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor, scope='caption'))
-                img = cset(img, (lod_in > lod), lambda: upscale2d(lerp(torgb(y, res, scope='image'), upscale2d(torgb(x, res - 1, scope='image'), scope='image'), lod_in - lod), 2**lod, scope='image'))
+                img_cap = cset(img_cap, (lod_in > lod), lambda: upscale2d(lerp(torgb(y, res, cap=True), upscale2d(torgb(x, res - 1, cap=True)), lod_in - lod), 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor))
+                img = cset(img, (lod_in > lod), lambda: upscale2d(lerp(torgb(y, res), upscale2d(torgb(x, res - 1)), lod_in - lod), 2**lod))
                 img_pair = lambda: (img(), img_cap())
             if res >= 5:
-                with tf.variable_scope('caption', reuse=tf.AUTO_REUSE):
-                    y_cap = block(x_cap, res, cap=True)
-                img_cap = lambda: upscale2d(torgb(y_cap, res, cap=True, scope='caption'), 2**(2*lod), y_factor=1, scope='caption')
-                if res > 2: img_cap = cset(img_cap, (lod_in > lod), lambda: upscale2d(lerp(torgb(y_cap, res, cap=True, scope='caption'), upscale2d(torgb(x_cap, res - 1, cap=True, scope='caption'), factor=4, y_factor=1, scope='caption'), lod_in - lod), 2**(2*lod), y_factor=1, scope='caption'))
+                y_cap = block(x_cap, res, cap=True)
+                img_cap = lambda: upscale2d(torgb(y_cap, res, cap=True), 2**(2*lod), y_factor=1)
+                if res > 2: img_cap = cset(img_cap, (lod_in > lod), lambda: upscale2d(lerp(torgb(y_cap, res, cap=True), upscale2d(torgb(x_cap, res - 1, cap=True), factor=4, y_factor=1), lod_in - lod), 2**(2*lod), y_factor=1))
                 img_pair = lambda: (img(), img_cap())
                 if lod > 0: img_pair = cset(img_pair, (lod_in < lod), lambda: grow((y, y_cap), res + 1, lod - 1))
             else:
@@ -524,17 +513,16 @@ def D_paired(
     lod_in = tf.cast(tf.get_variable('lod', initializer=np.float32(0.0), trainable=False), dtype)
 
     # Building blocks.
-    def fromrgb(x, res, scope=None): # res = 2..resolution_log2
-        scope = tf.variable_scope(scope, reuse=tf.AUTO_REUSE) if scope is not None else contextlib.suppress()
-        with scope:
-            with tf.variable_scope('FromRGB_lod%d' % (resolution_log2 - res)):
-                ret = act(apply_bias(conv2d(x, fmaps=nf(res-1), kernel=1, use_wscale=use_wscale)))
-                return ret
+    def fromrgb(x, res, cap=False): # res = 2..resolution_log2
+        with tf.variable_scope('FromRGB_lod%d-%s' % (resolution_log2 - res, 'caption' if cap else 'image')):
+            ret = act(apply_bias(conv2d(x, fmaps=nf(res-1), kernel=1, use_wscale=use_wscale)))
+            return ret
     def block(x, res): # res = 2..resolution_log2
         if res >= 5:
             x, x_cap = x
         else:
             x_cap = None
+
         with tf.variable_scope('%dx%d' % (2**res, 2**res)):
             if res >= 3: # 8x8 and up
                 with tf.variable_scope('Conv0'):
@@ -582,10 +570,8 @@ def D_paired(
     if structure == 'linear':
         img = images_in_img
         cap = images_in_cap
-        with tf.variable_scope('image', reuse=tf.AUTO_REUSE):
-            x = fromrgb(img, resolution_log2)
-        with tf.variable_scope('caption', reuse=tf.AUTO_REUSE):
-            x_cap = fromrgb(cap, resolution_log2)
+        x = fromrgb(img, resolution_log2)
+        x_cap = fromrgb(cap, resolution_log2, cap=True)
         x = (x, x_cap)
         for res in range(resolution_log2, 2, -1):
             lod = resolution_log2 - res
@@ -595,10 +581,8 @@ def D_paired(
                 cap = downscale2d(cap, factor=4, y_factor=1)
             else:
                 cap = downscale2d(cap, factor=2, y_factor=2)
-            with tf.variable_scope('image', reuse=tf.AUTO_REUSE):
-                y_img = fromrgb(img, res - 1)
-            with tf.variable_scope('caption', reuse=tf.AUTO_REUSE):
-                y_cap = fromrgb(cap, res - 1)
+            y_img = fromrgb(img, res - 1)
+            y_cap = fromrgb(cap, res - 1, cap=True)
             with tf.variable_scope('Grow_lod%d' % lod):
                 if isinstance(x, tuple):
                     x, x_cap = x
@@ -615,9 +599,9 @@ def D_paired(
         def grow(res, lod):
             cap_log_y_factor = max(4-res, 0)
             if res >= 5:
-                x = lambda: (fromrgb(downscale2d(images_in_img, 2**lod, scope='image'), res, scope='image'), fromrgb(downscale2d(images_in_cap, 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor, scope='caption'), res, scope='caption'))
+                x = lambda: (fromrgb(downscale2d(images_in_img, 2**lod), res), fromrgb(downscale2d(images_in_cap, 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor), res, cap=True))
             else:
-                x = lambda: fromrgb(downscale2d(images_in_img, 2**lod, scope='image'), res, scope='image') + fromrgb(downscale2d(images_in_cap, 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor, scope='caption'), res, scope='caption')
+                x = lambda: fromrgb(downscale2d(images_in_img, 2**lod), res) + fromrgb(downscale2d(images_in_cap, 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor), res, cap=True)
             if lod > 0: x = cset(x, (lod_in < lod), lambda: grow(res + 1, lod - 1))
             x = block(x(), res); y = lambda: x
             if res > 2:
@@ -625,14 +609,12 @@ def D_paired(
                 if isinstance(x, tuple):
                     def sub(x):
                         x, x_cap = x
-                        with tf.variable_scope('image', reuse=tf.AUTO_REUSE):
-                            y = lerp(x, fromrgb(downscale2d(images_in_img, 2**(lod+1)), res - 1), lod_in - lod)
-                        with tf.variable_scope('caption', reuse=tf.AUTO_REUSE):
-                            y_cap = lerp(x_cap, fromrgb(downscale2d(images_in_cap, 2**(2*(lod+1)-_cap_log_y_factor), y_factor=2**_cap_log_y_factor), res - 1), lod_in - lod)
+                        y = lerp(x, fromrgb(downscale2d(images_in_img, 2**(lod+1)), res - 1), lod_in - lod)
+                        y_cap = lerp(x_cap, fromrgb(downscale2d(images_in_cap, 2**(2*(lod+1)-_cap_log_y_factor), y_factor=2**_cap_log_y_factor), res - 1, cap=True), lod_in - lod)
                         return y, y_cap
                     y = cset(y, (lod_in > lod), lambda x=x: sub(x))
                 else:
-                    y = cset(y, (lod_in > lod), lambda: lerp(x, fromrgb(downscale2d(images_in_img, 2**(lod+1), scope='image'), res - 1, scope='image') + fromrgb(downscale2d(images_in_cap, 2**(2*(lod+1)-_cap_log_y_factor), y_factor=2**_cap_log_y_factor, scope='caption'), res - 1, scope='caption'), lod_in - lod))
+                    y = cset(y, (lod_in > lod), lambda: lerp(x, fromrgb(downscale2d(images_in_img, 2**(lod+1)), res - 1) + fromrgb(downscale2d(images_in_cap, 2**(2*(lod+1)-_cap_log_y_factor), y_factor=2**_cap_log_y_factor), res - 1, cap=True), lod_in - lod))
             return y()
         combo_out = grow(2, resolution_log2 - 2)
 

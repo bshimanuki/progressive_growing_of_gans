@@ -85,8 +85,8 @@ def process_reals(x, lod, mirror_augment, drange_data, drange_net, y_factor=2, x
                 y_factor = factor if y_factor == 2 else 1
                 x_factor = factor if x_factor == 2 else 1
             else:
-                y_factor = shape[0] // s[2]
-                x_factor = shape[1] // s[3]
+                y_factor = shape[-2] // s[-2]
+                x_factor = shape[-1] // s[-1]
             x = tf.reshape(x, [-1, s[1], s[2], 1, s[3], 1])
             x = tf.tile(x, [1, 1, 1, y_factor, 1, x_factor])
             x = tf.reshape(x, [-1, s[1], s[2] * y_factor, s[3] * x_factor])
