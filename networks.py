@@ -422,8 +422,9 @@ def G_paired(
     # Linear structure: simple but inefficient.
     if structure == 'linear':
         x_img = block(combo_in, 2)
+        x_cap = block(combo_in, 2, cap=True)
         images_out_img = torgb(x_img, 2)
-        images_out_cap = torgb(x_img, 2, cap=True)
+        images_out_cap = torgb(x_cap, 2, cap=True)
         for res in range(3, resolution_log2 + 1):
             lod = resolution_log2 - res
             x_img = block(x_img, res)
@@ -431,12 +432,10 @@ def G_paired(
             images_out_img = upscale2d(images_out_img)
             with tf.variable_scope('Grow_lod%d' % lod):
                 images_out_img = lerp_clip(img_img, images_out_img, lod_in - lod)
-            # with tf.variable_scope('caption_split', reuse=tf.AUTO_REUSE):
-                # images_out_cap = torgb(images_out_img, res, cap=True)
-            if res < 5:
-                x_cap = x_img
-            else:
-                x_cap = block(x_cap, res, cap=True)
+            # if res < 5:
+                # x_cap = x_img
+            # else:
+            x_cap = block(x_cap, res, cap=True)
             img_cap = torgb(x_cap, res, cap=True)
             if res >= 5:
                 images_out_cap = upscale2d(images_out_cap, factor=4, y_factor=1)
@@ -449,22 +448,29 @@ def G_paired(
     if structure == 'recursive':
         def grow(x, res, lod):
             cap_log_y_factor = max(4-res, 0)
-            if res == 5:
+            # if res == 5:
+                # x_cap = x
+            # elif res > 5:
+            if res == 2:
                 x_cap = x
-            elif res > 5:
+            else:
                 x, x_cap = x
             y = block(x, res)
             img = lambda: upscale2d(torgb(y, res), 2**lod)
-            img_cap = lambda: upscale2d(torgb(y, res, cap=True), 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor)
+            img_cap = lambda: upscale2d(torgb(y_cap, res, cap=True), 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor)
             img_pair = lambda: (img(), img_cap())
             if res > 2:
                 img_cap = cset(img_cap, (lod_in > lod), lambda: upscale2d(lerp(torgb(y, res, cap=True), upscale2d(torgb(x, res - 1, cap=True)), lod_in - lod), 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor))
                 img = cset(img, (lod_in > lod), lambda: upscale2d(lerp(torgb(y, res), upscale2d(torgb(x, res - 1)), lod_in - lod), 2**lod))
                 img_pair = lambda: (img(), img_cap())
-            if res >= 5:
+            # if res >= 5:
+            if True:
+                x_factor = 4 if res > 4 else 2
+                y_factor = 1 if res > 4 else 2
+                cap_log_y_factor = max(0, 4-res)
                 y_cap = block(x_cap, res, cap=True)
-                img_cap = lambda: upscale2d(torgb(y_cap, res, cap=True), 2**(2*lod), y_factor=1)
-                if res > 2: img_cap = cset(img_cap, (lod_in > lod), lambda: upscale2d(lerp(torgb(y_cap, res, cap=True), upscale2d(torgb(x_cap, res - 1, cap=True), factor=4, y_factor=1), lod_in - lod), 2**(2*lod), y_factor=1))
+                img_cap = lambda: upscale2d(torgb(y_cap, res, cap=True), 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor)
+                if res > 2: img_cap = cset(img_cap, (lod_in > lod), lambda: upscale2d(lerp(torgb(y_cap, res, cap=True), upscale2d(torgb(x_cap, res - 1, cap=True), factor=x_factor, y_factor=y_factor), lod_in - lod), 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor))
                 img_pair = lambda: (img(), img_cap())
                 if lod > 0: img_pair = cset(img_pair, (lod_in < lod), lambda: grow((y, y_cap), res + 1, lod - 1))
             else:
@@ -497,6 +503,8 @@ def D_paired(
     structure           = None,         # 'linear' = human-readable, 'recursive' = efficient, None = select automatically
     is_template_graph   = False,        # True = template graph constructed by the Network class, False = actual evaluation.
     resolution_cap = (16, 16, 1024), # CHW
+    use_caption_features=True,
+    use_image_features=True,
     **kwargs):                          # Ignore unrecognized keyword args.
 
     resolution_log2 = int(np.log2(resolution))
@@ -560,7 +568,13 @@ def D_paired(
                 with tf.variable_scope('Dense1'):
                     x = apply_bias(dense(x, fmaps=1+label_size, gain=1, use_wscale=use_wscale))
             if res == 5:
-                return x + x_cap
+                if use_caption_features:
+                    if use_image_features:
+                        return x + x_cap
+                    else:
+                        return x_cap
+                else:
+                    return x
             elif x_cap is not None:
                 return x, x_cap
             else:
@@ -590,7 +604,13 @@ def D_paired(
                     x_cap = lerp_clip(x_cap, y_cap, lod_in - lod)
                     x = (x, x_cap)
                 else:
-                    y = y_img + y_cap
+                    if use_caption_features:
+                        if use_image_features:
+                            y = y_img + y_cap
+                        else:
+                            y = y_cap
+                    else:
+                        y = y_img
                     x = lerp_clip(x, y, lod_in - lod)
         combo_out = block(x, 2)
 
@@ -601,7 +621,13 @@ def D_paired(
             if res >= 5:
                 x = lambda: (fromrgb(downscale2d(images_in_img, 2**lod), res), fromrgb(downscale2d(images_in_cap, 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor), res, cap=True))
             else:
-                x = lambda: fromrgb(downscale2d(images_in_img, 2**lod), res) + fromrgb(downscale2d(images_in_cap, 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor), res, cap=True)
+                if use_caption_features:
+                    if use_image_features:
+                        x = lambda: fromrgb(downscale2d(images_in_img, 2**lod), res) + fromrgb(downscale2d(images_in_cap, 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor), res, cap=True)
+                    else:
+                        x = lambda: fromrgb(downscale2d(images_in_cap, 2**(2*lod-cap_log_y_factor), y_factor=2**cap_log_y_factor), res, cap=True)
+                else:
+                    x = lambda: fromrgb(downscale2d(images_in_img, 2**lod), res)
             if lod > 0: x = cset(x, (lod_in < lod), lambda: grow(res + 1, lod - 1))
             x = block(x(), res); y = lambda: x
             if res > 2:
@@ -614,7 +640,13 @@ def D_paired(
                         return y, y_cap
                     y = cset(y, (lod_in > lod), lambda x=x: sub(x))
                 else:
-                    y = cset(y, (lod_in > lod), lambda: lerp(x, fromrgb(downscale2d(images_in_img, 2**(lod+1)), res - 1) + fromrgb(downscale2d(images_in_cap, 2**(2*(lod+1)-_cap_log_y_factor), y_factor=2**_cap_log_y_factor), res - 1, cap=True), lod_in - lod))
+                    if use_caption_features:
+                        if use_image_features:
+                            y = cset(y, (lod_in > lod), lambda: lerp(x, fromrgb(downscale2d(images_in_img, 2**(lod+1)), res - 1) + fromrgb(downscale2d(images_in_cap, 2**(2*(lod+1)-_cap_log_y_factor), y_factor=2**_cap_log_y_factor), res - 1, cap=True), lod_in - lod))
+                        else:
+                            y = cset(y, (lod_in > lod), lambda: lerp(x, fromrgb(downscale2d(images_in_cap, 2**(2*(lod+1)-_cap_log_y_factor), y_factor=2**_cap_log_y_factor), res - 1, cap=True), lod_in - lod))
+                    else:
+                        y = cset(y, (lod_in > lod), lambda: lerp(x, fromrgb(downscale2d(images_in_img, 2**(lod+1)), res - 1), lod_in - lod))
             return y()
         combo_out = grow(2, resolution_log2 - 2)
 

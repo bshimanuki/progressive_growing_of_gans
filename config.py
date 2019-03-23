@@ -47,6 +47,8 @@ G           = EasyDict(func='networks.G_paired')             # Options for gener
 # D           = EasyDict(func='networks.D_paper')             # Options for discriminator network.
 # D           = EasyDict(func='networks.D_paper', square=False)             # Options for discriminator network.
 D           = EasyDict(func='networks.D_paired')             # Options for discriminator network.
+# D           = EasyDict(func='networks.D_paired', use_caption_features=False)             # Options for discriminator network.
+# D           = EasyDict(func='networks.D_paired', use_image_features=False)             # Options for discriminator network.
 G_opt       = EasyDict(beta1=0.0, beta2=0.99, epsilon=1e-8) # Options for generator optimizer.
 D_opt       = EasyDict(beta1=0.0, beta2=0.99, epsilon=1e-8) # Options for discriminator optimizer.
 # G_loss      = EasyDict(func='loss.G_wgan_acgan')            # Options for generator loss.
@@ -71,6 +73,11 @@ grid        = EasyDict(size='1080p', layout='random')       # Options for train.
 # desc += '-flowers-captions-linear-small';            dataset = EasyDict(tfrecord_dir='flowers_linear_tfrecord');
 # desc += '-flowers-captions-linear-deduped';            dataset = EasyDict(tfrecord_dir='flowers_linear_deduped_tfrecord');
 desc += '-flowers-captions-shared';            dataset = EasyDict(tfrecord_dir='flowers_joint_shared_tfrecord', class_name='dataset.TFRecordPairedDataset');
+# desc += '-flowers-images-shared';            dataset = EasyDict(tfrecord_dir='flowers_images_shared_tfrecord', class_name='dataset.TFRecordPairedDataset');
+# desc += '-flowers-images-shared-split';            dataset = EasyDict(tfrecord_dir='flowers_images_shared_tfrecord', class_name='dataset.TFRecordPairedDataset');
+# desc += '-flowers-nocaptionloss-shared';            dataset = EasyDict(tfrecord_dir='flowers_images_shared_tfrecord', class_name='dataset.TFRecordPairedDataset');
+# desc += '-flowers-noimageloss-shared';            dataset = EasyDict(tfrecord_dir='flowers_joint_shared_tfrecord', class_name='dataset.TFRecordPairedDataset');
+# desc += '-birds-captions-shared';            dataset = EasyDict(tfrecord_dir='birds_joint_shared_tfrecord', class_name='dataset.TFRecordPairedDataset');
 # desc += '-celebahq';            dataset = EasyDict(tfrecord_dir='celebahq'); train.mirror_augment = True
 #desc += '-celeba';              dataset = EasyDict(tfrecord_dir='celeba'); train.mirror_augment = True
 #desc += '-cifar10';             dataset = EasyDict(tfrecord_dir='cifar10')
@@ -123,7 +130,7 @@ desc += '-flowers-captions-shared';            dataset = EasyDict(tfrecord_dir='
 # desc += '-preset-v2-2gpus'; num_gpus = 2; sched.minibatch_base = 8; sched.minibatch_dict = {4: 256, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16, 256: 8}; sched.G_lrate_dict = {512: 0.0015, 1024: 0.002}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000
 # desc += '-short-v2-2gpus'; num_gpus = 2; sched.minibatch_base = 8; sched.minibatch_dict = {4: 256, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16, 256: 8}; sched.G_lrate_dict = {512: 0.0015, 1024: 0.002}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000; sched.lod_training_kimg=100; sched.lod_transition_kimg=100;
 desc += '-medium-v2-2gpus'; num_gpus = 2; sched.minibatch_base = 8; sched.minibatch_dict = {4: 256, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16, 256: 8}; sched.G_lrate_dict = {512: 0.0015, 1024: 0.002}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000; sched.lod_training_kimg=300; sched.lod_transition_kimg=300;
-#desc += '-preset-v2-4gpus'; num_gpus = 4; sched.minibatch_base = 16; sched.minibatch_dict = {4: 512, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16}; sched.G_lrate_dict = {256: 0.0015, 512: 0.002, 1024: 0.003}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000
+# desc += '-preset-v2-4gpus'; num_gpus = 4; sched.minibatch_base = 16; sched.minibatch_dict = {4: 512, 8: 256, 16: 128, 32: 64, 64: 32, 128: 16}; sched.G_lrate_dict = {256: 0.0015, 512: 0.002, 1024: 0.003}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000
 #desc += '-preset-v2-8gpus'; num_gpus = 8; sched.minibatch_base = 32; sched.minibatch_dict = {4: 512, 8: 256, 16: 128, 32: 64, 64: 32}; sched.G_lrate_dict = {128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003}; sched.D_lrate_dict = EasyDict(sched.G_lrate_dict); train.total_kimg = 12000
 
 # Numerical precision (choose one).
@@ -143,7 +150,7 @@ desc += '-fp32'; sched.max_minibatch_per_gpu = {256: 16, 512: 8, 1024: 4}
 #desc += '-BENCHMARK'; sched.lod_initial_resolution = 4; sched.lod_training_kimg = 3; sched.lod_transition_kimg = 3; train.total_kimg = (8*2+1)*3; sched.tick_kimg_base = 1; sched.tick_kimg_dict = {}; train.image_snapshot_ticks = 1000; train.network_snapshot_ticks = 1000
 #desc += '-BENCHMARK0'; sched.lod_initial_resolution = 1024; train.total_kimg = 10; sched.tick_kimg_base = 1; sched.tick_kimg_dict = {}; train.image_snapshot_ticks = 1000; train.network_snapshot_ticks = 1000
 #desc += '-VERBOSE'; sched.tick_kimg_base = 1; sched.tick_kimg_dict = {}; train.image_snapshot_ticks = 1; train.network_snapshot_ticks = 100
-#desc += '-GRAPH'; train.save_tf_graph = True
+desc += '-GRAPH'; train.save_tf_graph = True
 #desc += '-HIST'; train.save_weight_histograms = True
 
 #----------------------------------------------------------------------------

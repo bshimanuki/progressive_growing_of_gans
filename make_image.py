@@ -9,10 +9,11 @@ import cv2
 from gensim.models import Word2Vec
 import imageio
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 import scipy.stats
 import scipy.misc
-from PIL import Image, ImageDraw, ImageFont
 import skimage
+from tqdm import tqdm
 
 import coco_captions
 
@@ -70,30 +71,44 @@ def convert_joint_all_flowers(all_captions=False):
     random.shuffle(pairs)
     convert_joint_all(None, in_dir, out_dir, dataset=pairs)
 
-def convert_joint_shared_flowers(lod=7):
-    in_dir = 'datasets/flowers/jpg'
-    out_dir = 'datasets/flowers_joint_shared_npz'
-    classes = open('datasets/flowers/trainclasses.txt').read().split('\n')
+def convert_joint_shared(
+        in_dir = 'datasets/flowers/jpg',
+        # out_dir = 'datasets/flowers_joint_shared_npz',
+        out_dir = 'datasets/flowers_images_shared_npz',
+        classes = 'datasets/flowers/trainclasses.txt',
+        caption_dir = 'datasets/flowers/text_c10',
+        res=7,
+        birds=False,
+        keep_captions=True,
+):
+    classes = open(classes).read().split('\n')
     pairs = []
     for c in classes:
-        directory = 'datasets/flowers/text_c10/{}'.format(c.strip())
+        directory = os.path.join(caption_dir, c.strip())
         files = glob.glob(os.path.join(directory, '*.txt'))
         for f in files:
             captions = open(f).read().strip().split('\n')
             for caption in set(captions):
                 base = os.path.splitext(os.path.basename(f))[0]
-                img = '{}.jpg'.format(base)
+                if birds:
+                    img = '{}/{}.jpg'.format(c, base)
+                else:
+                    img = '{}.jpg'.format(base)
                 pairs.append((caption, img))
     random.seed(1)
     random.shuffle(pairs)
     os.makedirs(out_dir, exist_ok=True)
-    img_size = 2 ** lod
-    cap_size = 16 * 4 ** (lod - 4)
-    for i, (caption, img) in enumerate(pairs):
+    img_size = 2 ** res
+    cap_size = 16 * 4 ** (res - 4)
+    for i, (caption, img) in tqdm(enumerate(pairs)):
         in_path = os.path.join(in_dir, img)
         out_path = os.path.join(out_dir, '{}.npz'.format(i))
         imgimg = scipy.misc.imresize(imageio.imread(in_path), (img_size, img_size))
+        if imgimg.ndim == 2:
+            imgimg = cv2.cvtColor(imgimg, cv2.COLOR_GRAY2RGB)
         capimg = convert(caption, color='full_mask', size=cap_size, square=False)
+        if not keep_captions:
+            capimg[...] = 0
         np.savez(out_path, img=imgimg, cap=capimg)
 
 def convert_joint_all(json, in_dir, out_dir, dataset=None, **kwargs):
@@ -317,12 +332,12 @@ if __name__ == '__main__':
     # print(decode_wordblock(imageio.imread('img.png')))
     # exit()
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('infile', type=argparse.FileType('r'))
-    parser.add_argument('--dir', type=str, default='data')
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('infile', type=argparse.FileType('r'))
+    # parser.add_argument('--dir', type=str, default='data')
+    # args = parser.parse_args()
+    # texts = args.infile.read().strip().split('\n')
 
-    texts = args.infile.read().strip().split('\n')
     # convert_all(texts, args.dir)
     # convert_all(texts, args.dir, word_per_line=True)
     # convert_all(texts, args.dir, color=True)
@@ -335,4 +350,11 @@ if __name__ == '__main__':
     # print(ocr(img))
     # convert_joint_all('/data/vision/torralba/datasets/COCO/annotations/captions_train2014.json', in_dir='/data/vision/torralba/datasets/COCO/train2014', out_dir='datasets/joint_png')
     # convert_joint_all_flowers()
-    convert_joint_shared_flowers()
+    convert_joint_shared(keep_captions=False)
+    # convert_joint_shared(
+        # in_dir = 'datasets/birds/CUB_200_2011/images',
+        # out_dir = 'datasets/birds_joint_shared_npz',
+        # classes = 'datasets/birds/t7_format/trainclasses.txt',
+        # caption_dir = 'datasets/birds/t7_format/text_c10',
+        # birds=True,
+    # )
