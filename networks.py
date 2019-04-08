@@ -97,12 +97,12 @@ def upscale2d(x, factor=2, y_factor=None):
 def upscale2d_conv2d(x, fmaps, kernel, gain=np.sqrt(2), use_wscale=False, y_factor=2, x_factor=2):
     assert kernel >= 1 and kernel % 2 == 1
     w = get_weight([kernel, kernel, fmaps, x.shape[1].value], gain=gain, use_wscale=use_wscale, fan_in=(kernel**2)*x.shape[1].value)
-    w = tf.pad(w, [[y_factor-1,1], [x_factor-1,1], [0,0], [0,0]], mode='CONSTANT')
+    w = tf.pad(w, [[y_factor-1, y_factor-1], [x_factor-1, x_factor-1], [0,0], [0,0]], mode='CONSTANT')
     partials = []
     # w = tf.add_n([w[1:, 1:], w[:-1, 1:], w[1:, :-1], w[:-1, :-1]])
     for _y in range(y_factor):
         for _x in range(x_factor):
-            partials.append(w[_y:kernel+_y+1, _x:kernel+_x+1])
+            partials.append(w[_y:kernel+_y+y_factor-1, _x:kernel+_x+x_factor-1])
     w = tf.add_n(partials)
     w = tf.cast(w, x.dtype)
     os = [tf.shape(x)[0], fmaps, x.shape[2] * y_factor, x.shape[3] * x_factor]
@@ -127,12 +127,12 @@ def downscale2d(x, factor=2, y_factor=None):
 def conv2d_downscale2d(x, fmaps, kernel, gain=np.sqrt(2), use_wscale=False, y_factor=2, x_factor=2):
     assert kernel >= 1 and kernel % 2 == 1
     w = get_weight([kernel, kernel, x.shape[1].value, fmaps], gain=gain, use_wscale=use_wscale)
-    w = tf.pad(w, [[y_factor-1,1], [x_factor-1,1], [0,0], [0,0]], mode='CONSTANT')
+    w = tf.pad(w, [[y_factor-1,y_factor-1], [x_factor-1,x_factor-1], [0,0], [0,0]], mode='CONSTANT')
     partials = []
     # w = tf.add_n([w[1:, 1:], w[:-1, 1:], w[1:, :-1], w[:-1, :-1]]) * 0.25
     for _y in range(y_factor):
         for _x in range(x_factor):
-            partials.append(w[_y:kernel+_y+1, _x:kernel+_x+1])
+            partials.append(w[_y:kernel+_y+y_factor-1, _x:kernel+_x+x_factor-1])
     w = tf.add_n(partials) / (y_factor * x_factor)
     w = tf.cast(w, x.dtype)
     return tf.nn.conv2d(x, w, strides=[1,1,y_factor,x_factor], padding='SAME', data_format='NCHW')
